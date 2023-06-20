@@ -1,22 +1,10 @@
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
-const Card = () => (
-  <HoverCard>
-    <HoverCardTrigger>Hover</HoverCardTrigger>
-    <HoverCardContent>
-      The React Framework – created and maintained by @vercel.
-    </HoverCardContent>
-  </HoverCard>
-);
+import { Suspense } from "react";
+import { Notifications } from "./notifications";
 
 export function App() {
   return (
-    <div>
-      hello world!
-      <Card />
-    </div>
+    <Suspense>
+      <Notifications />
+    </Suspense>
   );
 }
