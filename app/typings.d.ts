@@ -5,3 +5,5 @@ declare const process: {
     GITHUB_ACCESS_TOKEN: string;
   };
 };
+
+declare module "datascript";
