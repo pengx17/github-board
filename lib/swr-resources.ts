@@ -1,5 +1,5 @@
 import { openDB } from "idb";
-import { Issue, Notification, Comment, User } from "@/types/github";
+import { Issue, Notification, Comment, FullUser } from "@/types/github";
 import { Observable, shareReplay } from "rxjs";
 import { formatISO, subDays } from "date-fns";
 import {
@@ -224,7 +224,7 @@ export const getComments$ = (repo: string, id: number) => {
   return comments$;
 };
 
-async function mergeAndStoreUser(login: string, user?: User) {
+async function mergeAndStoreUser(login: string, user?: FullUser) {
   const db = await openDB("users", 1, {
     upgrade(db) {
       db.createObjectStore("users");
@@ -232,7 +232,7 @@ async function mergeAndStoreUser(login: string, user?: User) {
   });
   const tx = db.transaction("users", "readwrite");
   const existingUser = await tx.store.get(login);
-  const mergedUser: User = {
+  const mergedUser: FullUser = {
     ...existingUser,
     ...user,
   };
@@ -244,7 +244,7 @@ async function mergeAndStoreUser(login: string, user?: User) {
   return mergedUser;
 }
 
-const user$Cache = new Map<string, Observable<User>>();
+const user$Cache = new Map<string, Observable<FullUser>>();
 
 export const getUser$ = (login: string) => {
   let user$ = user$Cache.get(login);

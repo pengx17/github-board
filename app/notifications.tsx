@@ -6,7 +6,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { formatDistance } from "date-fns";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 import {
   Sheet,
@@ -16,86 +15,24 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-import { atom, useAtomValue } from "jotai";
+import { useAtomValue } from "jotai";
 import { atomWithObservable } from "jotai/utils";
 
-import {
-  getComments$,
-  getIssue$,
-  getUser$,
-  notifications$,
-} from "@/lib/swr-resources";
-import { Notification, Comment } from "@/types/github";
-import { Suspense, useMemo, useState } from "react";
-import { parseIssueUrl, query } from "@/lib/datascript";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useComments, useIssue, useUser } from "@/lib/data-hooks";
+
 import { mdToHTML } from "@/lib/md-to-html";
-
-function queryLoginReferences(login?: string) {
-  if (login) {
-    const result = query(`
-    [:find (pull ?i [*])
-    :where
-    [?u ":user/login" "${login}"]
-    (or [?i ":issue/user" ?u]
-        [?i ":issue/assignees" ?u]
-        [?i ":issue/references" ?u]
-        [?i ":comment/references" ?u]
-        [?i ":comment/user" ?u]
-        [?i ":repository/owner" ?u])]
-  ]`).flat();
-    return result;
-  }
-}
-
-function useUser(login: string) {
-  const userAtom = useMemo(() => {
-    if (!login) {
-      return atom(null);
-    }
-    return atomWithObservable(() => {
-      return getUser$(login);
-    });
-  }, [login]);
-  return useAtomValue(userAtom);
-}
-
-function useIssue(issueUrl: string) {
-  const issueAtom = useMemo(() => {
-    return atomWithObservable(() => {
-      const { canonicalRepo, issueId } = parseIssueUrl(issueUrl);
-      return getIssue$(canonicalRepo, issueId);
-    });
-  }, [issueUrl]);
-  return useAtomValue(issueAtom);
-}
-
-function useComments(issueUrl: string) {
-  const commentsAtom = useMemo(() => {
-    return atomWithObservable(() => {
-      const { canonicalRepo, issueId } = parseIssueUrl(issueUrl);
-      return getComments$(canonicalRepo, issueId);
-    });
-  }, [issueUrl]);
-  const comments = useAtomValue(commentsAtom);
-  return comments;
-}
+import { notifications$ } from "@/lib/swr-resources";
+import { Comment, Notification } from "@/types/github";
+import { Suspense, startTransition, useState } from "react";
+import { UserAvatar } from "./user";
 
 function CommentCard({ comment }: { comment: Comment }) {
-  const user = useUser(comment.user.login);
   return (
     <Card key={comment.id}>
       <CardHeader>
-        <CardTitle
-          className="flex gap-1 items-center"
-          onClick={() => {
-            console.log(queryLoginReferences(user?.login));
-          }}
-        >
-          <Avatar className="h-4 w-4">
-            <AvatarFallback>{user?.login?.[0]}</AvatarFallback>
-            <AvatarImage src={user?.avatar_url} />
-          </Avatar>
-          {user?.login}
+        <CardTitle>
+          <UserAvatar login={comment.user.login} />
         </CardTitle>
         <CardDescription>
           {formatDistance(new Date(comment.updated_at), new Date())}
@@ -123,22 +60,12 @@ function PrefetchIssue({ issueUrl }: { issueUrl: string }) {
 function IssueDetail({ issueUrl }: { issueUrl: string }) {
   const comments = useComments(issueUrl);
   const issue = useIssue(issueUrl);
-  const user = useUser(issue?.user?.login);
   return (
     <>
       <Card className="bg-gray-50">
         <CardHeader>
-          <CardTitle
-            className="flex gap-1 items-center"
-            onClick={() => {
-              console.log(queryLoginReferences(user?.login));
-            }}
-          >
-            <Avatar className="h-4 w-4">
-              <AvatarFallback>{user?.login?.[0]}</AvatarFallback>
-              <AvatarImage src={user?.avatar_url} />
-            </Avatar>
-            {user?.login}
+          <CardTitle>
+            <UserAvatar login={issue?.user?.login} />
           </CardTitle>
           <CardDescription>
             {issue.updated_at &&
@@ -185,11 +112,7 @@ function DetailSheet({
           </SheetHeader>
         </SheetContent>
       </Sheet>
-      {isIssue && (
-        <Suspense>
-          <PrefetchIssue issueUrl={notification.subject.url} />
-        </Suspense>
-      )}
+      {isIssue && <PrefetchIssue issueUrl={notification.subject.url} />}
     </>
   );
 }
@@ -203,10 +126,13 @@ const notificationsAtom = atomWithObservable(() => notifications$);
 function Notification({ notification }: { notification: Notification }) {
   const [open, setOpen] = useState(false);
   return (
-    <>
+    <div className="relative">
       <Card
         onClick={() => {
-          setOpen(true);
+          console.log(notification);
+          startTransition(() => {
+            setOpen(true);
+          });
         }}
       >
         <CardHeader>
@@ -219,14 +145,20 @@ function Notification({ notification }: { notification: Notification }) {
           </CardDescription>
         </CardContent>
       </Card>
-      <DetailSheet
-        open={open}
-        onOpenChange={(open) => {
-          setOpen(open);
-        }}
-        notification={notification}
-      />
-    </>
+      <Suspense
+        fallback={
+          <div className="absolute inset-0 bg-gray-50 opacity-40"></div>
+        }
+      >
+        <DetailSheet
+          open={open}
+          onOpenChange={(open) => {
+            setOpen(open);
+          }}
+          notification={notification}
+        />
+      </Suspense>
+    </div>
   );
 }
 
@@ -242,18 +174,20 @@ export function NotificationsByRepo() {
     return acc;
   }, {} as Record<string, Notification[]>);
   return (
-    <div className="flex gap-2 p-4 max-h-screen">
+    <div className="flex gap-2 p-4 max-h-screen h-full">
       {Object.entries(notificationsByRepo ?? {}).map(
         ([repoName, notifications]) => (
-          <div
-            key={repoName}
-            className="flex flex-col gap-1 w-96 shrink-0 max-h-full overflow-auto p-1 pr-3"
-          >
-            <div className="font-semibold sticky top-0">{repoName}</div>
-            {notifications.map((notification) => (
-              <Notification key={notification.id} notification={notification} />
-            ))}
-          </div>
+          <ScrollArea key={repoName} className="w-96 h-auto shrink-0">
+            <div className="flex flex-col gap-2 p-1 pr-3">
+              <div className="font-semibold sticky top-0 z-10">{repoName}</div>
+              {notifications.map((notification) => (
+                <Notification
+                  key={notification.id}
+                  notification={notification}
+                />
+              ))}
+            </div>
+          </ScrollArea>
         )
       )}
     </div>
