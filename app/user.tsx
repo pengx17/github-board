@@ -6,36 +6,41 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { mdToHTML } from "@/lib/md-to-html";
+import { Button } from "@/components/ui/button";
 
 export const UsersSheet = () => {
   const [open, setOpen] = useState(false);
   return (
-    <>
-      <button
-        className="text-gray-500 hover:text-gray-900"
+    <Suspense fallback="loading ...">
+      <Button
+        className="fixed bottom-4 right-4"
         onClick={() => {
           setOpen(true);
         }}
       >
         Users
-      </button>
+      </Button>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent>
           <UsersAvatars />
         </SheetContent>
       </Sheet>
-    </>
+    </Suspense>
   );
-}
+};
 
 export const UsersAvatars = () => {
   const users = useUsers();
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex gap-2 flex-wrap">
       {users.map((user) => {
-        return <UserAvatar key={user[":user/login"]} login={user[":user/login"]} />;
+        return (
+          <div className="bg-gray-100 rounded px-2">
+            <UserAvatar key={user[":user/login"]} login={user[":user/login"]} />
+          </div>
+        );
       })}
     </div>
   );

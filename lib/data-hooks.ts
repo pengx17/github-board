@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { datoms$, parseIssueUrl, query } from "./datascript";
 import { getComments$, getIssue$, getUser$ } from "./swr-resources";
 import { debounceTime, map, merge, of } from "rxjs";
-import { FullUser } from "@/types/github";
 
 export function useUser(login: string) {
   const userAtom = useMemo(() => {
