@@ -7,3 +7,4 @@ declare const process: {
 };
 
 declare module "datascript";
+declare module 'rehype-prism-plus';

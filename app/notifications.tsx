@@ -5,164 +5,234 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { formatDistance } from "date-fns";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+
 import {
-  getIssue,
-  getIssueComments,
-  getNotifications,
-  getUser,
-} from "@/lib/github";
-import { formatISO, formatDistance, subMonths, subDays } from "date-fns";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
-import { openDB } from "idb";
-
-import { useAtomValue } from "jotai";
+import { atom, useAtomValue } from "jotai";
 import { atomWithObservable } from "jotai/utils";
 
 import {
-  interval,
-  of,
-  timer,
-  shareReplay,
-  merge,
-  map,
-  defer,
-  switchMap,
-  debounceTime,
-} from "rxjs";
+  getComments$,
+  getIssue$,
+  getUser$,
+  notifications$,
+} from "@/lib/swr-resources";
+import { Notification, Comment } from "@/types/github";
+import { Suspense, useMemo, useState } from "react";
+import { parseIssueUrl, query } from "@/lib/datascript";
+import { mdToHTML } from "@/lib/md-to-html";
 
-import { Notification } from "@/types/github";
-import {
-  commentToDatoms,
-  datoms$,
-  issueToDatoms,
-  query,
-  transact,
-  userToDatoms,
-} from "@/lib/datascript";
-import { useEffect } from "react";
-
-let lastFetchBefore: string | null = null;
-
-function getCurrentNotificationParam(lastFetchBefore: string | null) {
-  const now = new Date();
-  const before = now; // new before
-  // const since = lastFetchBefore ?? formatISO(subMonths(now, 1)); // new since
-  const since = lastFetchBefore ?? formatISO(subDays(now, 1)); // new since
-  return {
-    before: formatISO(before),
-    since,
-  };
+function queryLoginReferences(login?: string) {
+  if (login) {
+    const result = query(`
+    [:find (pull ?i [*])
+    :where
+    [?u ":user/login" "${login}"]
+    (or [?i ":issue/user" ?u]
+        [?i ":issue/assignees" ?u]
+        [?i ":issue/references" ?u]
+        [?i ":comment/references" ?u]
+        [?i ":comment/user" ?u]
+        [?i ":repository/owner" ?u])]
+  ]`).flat();
+    return result;
+  }
 }
 
-async function mergeAndStoreNotifications(notifications: Notification[]) {
-  const db = await openDB("notifications", 1, {
-    upgrade(db) {
-      db.createObjectStore("notifications");
-    },
-  });
-  const tx = db.transaction("notifications", "readwrite");
-  const existingNotifications: Notification[] =
-    (await tx.store.get("notifications")) ?? [];
-  // merge notifications based on id
-  // if the id is the same, use the new notification
-  const allNotifications = [
-    ...existingNotifications.filter(
-      (existingNotification) =>
-        !notifications.some(
-          (newNotification) => newNotification.id === existingNotification.id
-        )
-    ),
-    ...notifications,
-  ];
-  await tx.store.put(allNotifications, "notifications");
-  await tx.done;
-  db.close();
-  return allNotifications;
-}
-
-const notifications$ = merge(
-  of(0),
-  defer(() => timer(100).pipe(map(() => 1))),
-  interval(1000 * 30)
-).pipe(
-  switchMap((tick) => {
-    if (tick === 0) {
-      return of(null);
+function useUser(login: string) {
+  const userAtom = useMemo(() => {
+    if (!login) {
+      return atom(null);
     }
-    const { before, since } = getCurrentNotificationParam(lastFetchBefore);
-    return getNotifications({ before, since });
-  }),
-  switchMap(async (response) => {
-    const allNotifications = await mergeAndStoreNotifications(
-      response?.result ?? []
-    );
-    if (response && response.before) {
-      lastFetchBefore = response.before;
-    }
-    return allNotifications.sort((a, b) => {
-      return (
-        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-      );
+    return atomWithObservable(() => {
+      return getUser$(login);
     });
-  }),
-  shareReplay(1)
-);
+  }, [login]);
+  return useAtomValue(userAtom);
+}
 
-const users$ = merge(of(0), datoms$.pipe(debounceTime(500))).pipe(
-  map(() => {
-    return query(`
-    [:find (pull ?u [*])
-     :where 
-     [?u ":user/login"]]
-     `).flat();
-  })
-);
+function useIssue(issueUrl: string) {
+  const issueAtom = useMemo(() => {
+    return atomWithObservable(() => {
+      const { canonicalRepo, issueId } = parseIssueUrl(issueUrl);
+      return getIssue$(canonicalRepo, issueId);
+    });
+  }, [issueUrl]);
+  return useAtomValue(issueAtom);
+}
+
+function useComments(issueUrl: string) {
+  const commentsAtom = useMemo(() => {
+    return atomWithObservable(() => {
+      const { canonicalRepo, issueId } = parseIssueUrl(issueUrl);
+      return getComments$(canonicalRepo, issueId);
+    });
+  }, [issueUrl]);
+  const comments = useAtomValue(commentsAtom);
+  return comments;
+}
+
+function CommentCard({ comment }: { comment: Comment }) {
+  const user = useUser(comment.user.login);
+  return (
+    <Card key={comment.id}>
+      <CardHeader>
+        <CardTitle
+          className="flex gap-1 items-center"
+          onClick={() => {
+            console.log(queryLoginReferences(user?.login));
+          }}
+        >
+          <Avatar className="h-4 w-4">
+            <AvatarFallback>{user?.login?.[0]}</AvatarFallback>
+            <AvatarImage src={user?.avatar_url} />
+          </Avatar>
+          {user?.login}
+        </CardTitle>
+        <CardDescription>
+          {formatDistance(new Date(comment.updated_at), new Date())}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="prose prose-sm max-w-none">
+        <div
+          dangerouslySetInnerHTML={{
+            __html: mdToHTML(comment.body),
+          }}
+        ></div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PrefetchIssue({ issueUrl }: { issueUrl: string }) {
+  useComments(issueUrl);
+  const issue = useIssue(issueUrl);
+  useUser(issue?.user?.login);
+
+  return null;
+}
+
+function IssueDetail({ issueUrl }: { issueUrl: string }) {
+  const comments = useComments(issueUrl);
+  const issue = useIssue(issueUrl);
+  const user = useUser(issue?.user?.login);
+  return (
+    <>
+      <Card className="bg-gray-50">
+        <CardHeader>
+          <CardTitle
+            className="flex gap-1 items-center"
+            onClick={() => {
+              console.log(queryLoginReferences(user?.login));
+            }}
+          >
+            <Avatar className="h-4 w-4">
+              <AvatarFallback>{user?.login?.[0]}</AvatarFallback>
+              <AvatarImage src={user?.avatar_url} />
+            </Avatar>
+            {user?.login}
+          </CardTitle>
+          <CardDescription>
+            {issue.updated_at &&
+              formatDistance(new Date(issue.updated_at), new Date())}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="prose prose-sm max-w-none">
+          <div
+            dangerouslySetInnerHTML={{
+              __html: mdToHTML(issue.body),
+            }}
+          ></div>
+        </CardContent>
+      </Card>
+
+      <SheetDescription className="flex flex-col gap-4">
+        {comments.map((comment) => {
+          return <CommentCard key={comment.id} comment={comment}></CommentCard>;
+        })}
+      </SheetDescription>
+    </>
+  );
+}
+
+function DetailSheet({
+  notification,
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  notification: Notification;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const isIssue =
+    notification.subject.type === "Issue" ||
+    notification.subject.type === "PullRequest";
+  return (
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent>
+          <SheetHeader>
+            <SheetTitle>{notification.subject.title}</SheetTitle>
+            {isIssue && <IssueDetail issueUrl={notification.subject.url} />}
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>
+      {isIssue && (
+        <Suspense>
+          <PrefetchIssue issueUrl={notification.subject.url} />
+        </Suspense>
+      )}
+    </>
+  );
+}
 
 const notificationsAtom = atomWithObservable(() => notifications$);
-const usersAtom = atomWithObservable(() => users$);
 
 // different notification falls to different thread type. Namely, issue, pull request, commit, etc.
 // we need to render each of the thread type in different ways
 // for example, both issue & pull request can have comments, but
 // issue may have labels, issue status and pull request may have different merge status
 function Notification({ notification }: { notification: Notification }) {
-  useEffect(() => {
-    (async () => {
-      if (["PullRequest", "Issue"].includes(notification.subject.type)) {
-        const issue = await getIssue(notification.subject.url);
-        transact(issueToDatoms(issue), "transact issue " + issue.url);
-        const comments = await getIssueComments(issue.comments_url);
-        comments.forEach(async (comment) => {
-          transact(
-            commentToDatoms(comment),
-            "transact comment " + comment.body
-          );
-          const user = await getUser(comment.user.url);
-          transact(userToDatoms(user), "transact user " + user.login);
-        });
-      }
-    })();
-  }, [notification]);
-
+  const [open, setOpen] = useState(false);
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{notification.subject.title}</CardTitle>
-        <p>{notification.repository.full_name}</p>
-      </CardHeader>
-      <CardContent>
-        <CardDescription>
-          {formatDistance(new Date(notification.updated_at), new Date())}
-        </CardDescription>
-      </CardContent>
-    </Card>
+    <>
+      <Card
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        <CardHeader>
+          <CardTitle>{notification.subject.title}</CardTitle>
+          <p>{notification.repository.full_name}</p>
+        </CardHeader>
+        <CardContent>
+          <CardDescription>
+            {formatDistance(new Date(notification.updated_at), new Date())}
+          </CardDescription>
+        </CardContent>
+      </Card>
+      <DetailSheet
+        open={open}
+        onOpenChange={(open) => {
+          setOpen(open);
+        }}
+        notification={notification}
+      />
+    </>
   );
 }
 
 export function NotificationsByRepo() {
   const result = useAtomValue(notificationsAtom);
-  const users = useAtomValue(usersAtom);
-  console.log(users);
+
   const notificationsByRepo = result?.reduce((acc, notification) => {
     const repoName = notification.repository.full_name;
     if (!acc[repoName]) {
