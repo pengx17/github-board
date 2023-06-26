@@ -1,8 +1,18 @@
 import { PullRequest, Comment, FullUser } from "@/types/github";
 import { Octokit } from "octokit";
 
+const GITHUB_ACCESS_TOKEN = localStorage.getItem("GITHUB_ACCESS_TOKEN");
+
+if (!GITHUB_ACCESS_TOKEN) {
+  const token = window.prompt("Please enter your GitHub access token (ghp_xxx)", "");
+  if (token) {
+    localStorage.setItem("GITHUB_ACCESS_TOKEN", token);
+    window.location.reload();
+  }
+}
+
 const octokit = new Octokit({
-  auth: process.env.GITHUB_ACCESS_TOKEN,
+  auth: GITHUB_ACCESS_TOKEN,
   request: {
     fetch: window.fetch,
   },
